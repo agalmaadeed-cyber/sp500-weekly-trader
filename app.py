@@ -1,6 +1,6 @@
 """
 app.py — SP500-RSI Weekly Trader
-Trade lifecycle: pending (signal week) -> open (next week open) -> closed (auto on stop/target)
+Trade lifecycle: pending (signal week) -> open (next day open) -> closed (auto on stop/target)
 """
 
 import streamlit as st
@@ -17,6 +17,7 @@ from backtest_engine import run_backtest, compute_stats
 
 INITIAL_CAPITAL = 10_000
 RISK_PER_TRADE  = 0.01
+APP_PASSWORD    = "sp500weekly2026"
 
 st.set_page_config(page_title="SP500-RSI Weekly Trader", page_icon="📈",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -51,7 +52,6 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;colo
 .price-item label{font-size:0.6rem;letter-spacing:0.1em;color:var(--muted);text-transform:uppercase;display:block;}
 .price-item span{font-size:0.85rem;color:var(--text);}
 .compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-top:0.6rem;}
-.compare-col label{font-size:0.6rem;letter-spacing:0.1em;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:0.3rem;}
 .compare-item{font-size:0.78rem;color:var(--text);padding:0.15rem 0;}
 .compare-item.diff-pos{color:var(--accent);}
 .compare-item.diff-neg{color:var(--red);}
@@ -65,9 +65,39 @@ hr{border-color:var(--border)!important;}
 .stButton>button:hover{border-color:var(--accent)!important;color:var(--accent)!important;}
 [data-testid="stSelectbox"]>div>div{background:var(--surface)!important;}
 [data-testid="stNumberInput"] input{background:var(--surface)!important;color:var(--text)!important;}
+.login-box{max-width:360px;margin:8rem auto;padding:2.5rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;}
+.login-title{font-size:1rem;font-weight:700;letter-spacing:0.08em;color:var(--text);margin-bottom:0.4rem;}
+.login-sub{font-size:0.75rem;color:var(--muted);margin-bottom:1.5rem;}
 </style>
 """, unsafe_allow_html=True)
 
+
+# ── Password Gate ─────────────────────────────────────────────
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    st.markdown(
+        '<div class="login-box">'
+        '<div class="login-title">SP500-RSI WEEKLY TRADER</div>'
+        '<div class="login-sub">Momentum Divergence · Weekly · RSI Divergence on S&P 500</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        pwd = st.text_input("Password", type="password", label_visibility="collapsed",
+                            placeholder="Enter password")
+        if st.button("LOGIN", use_container_width=True):
+            if pwd == APP_PASSWORD:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
+    st.stop()
+
+
+# ── Authenticated — rest of app ───────────────────────────────
 
 def position_size(entry, stop, capital=INITIAL_CAPITAL):
     risk_per_unit = abs(entry - stop)
@@ -76,7 +106,6 @@ def position_size(entry, stop, capital=INITIAL_CAPITAL):
     return round((capital * RISK_PER_TRADE) / risk_per_unit, 4)
 
 
-# ── Auto-update on every app load ────────────────────────────
 if "positions_updated" not in st.session_state:
     with st.spinner("Updating positions..."):
         update_summary = update_all_positions()
@@ -232,7 +261,7 @@ with tab_scanner:
         ticker_opened = st.session_state.pop("trade_opened")
         st.success(
             f"Trade registered as PENDING: {ticker_opened} -- "
-            f"Will activate at next week open price. Check Paper Trader tab."
+            f"Will activate at tomorrow's open. Check Paper Trader tab."
         )
 
 
@@ -277,9 +306,8 @@ with tab_paper:
     else:
         st.markdown('<div class="empty-state" style="padding:1rem;">NO CLOSED TRADES YET</div>', unsafe_allow_html=True)
 
-    # ── Pending trades ────────────────────────────────────────
     if not pending_df.empty:
-        st.markdown('<div class="section-title">Pending Trades -- Waiting for Next Week Open</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Pending Trades -- Activating at Tomorrow Open</div>', unsafe_allow_html=True)
         for _, t in pending_df.iterrows():
             is_long   = t["direction"] == "long"
             dir_label = "LONG" if is_long else "SHORT"
@@ -297,13 +325,12 @@ with tab_paper:
                 f'Signal stop: <b>{t["signal_stop"]}</b> &nbsp;|&nbsp;'
                 f'Signal T1: <b>{t["signal_target1"]}</b> &nbsp;|&nbsp;'
                 f'RSI: {t["signal_rsi"]}'
-                f'<br><span style="color:var(--yellow);">Will activate at next week open. Actual prices will be set then.</span>'
+                f'<br><span style="color:var(--yellow);">Will activate at tomorrow\'s open. Actual prices will be set then.</span>'
                 f'</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
 
-    # ── Open positions ────────────────────────────────────────
     st.markdown('<div class="section-title">Open Positions</div>', unsafe_allow_html=True)
 
     if open_df.empty:
@@ -360,7 +387,6 @@ with tab_paper:
                     st.session_state.pop("positions_updated", None)
                     st.rerun()
 
-    # ── Trade history ─────────────────────────────────────────
     if not closed_df.empty:
         st.markdown('<div class="section-title">Trade History -- Signal vs Actual</div>', unsafe_allow_html=True)
         display_cols = [
@@ -373,8 +399,7 @@ with tab_paper:
         available = [c for c in display_cols if c in closed_df.columns]
         st.dataframe(
             closed_df[available].sort_values("actual_exit_date", ascending=False),
-            use_container_width=True,
-            hide_index=True,
+            use_container_width=True, hide_index=True,
             column_config={
                 "r_multiple": st.column_config.NumberColumn("R", format="%.3f"),
                 "slippage":   st.column_config.NumberColumn("Slippage", format="%.4f"),
@@ -495,11 +520,11 @@ with tab_logic:
         '<b style="color:#00f5a0;">The Idea</b><br>'
         'When price and momentum disagree -- momentum wins.<br><br>'
         '<b style="color:#00f5a0;">Trade Lifecycle</b><br>'
-        '1. Signal detected on close of week N.<br>'
-        '2. You review and press Enter Trade that weekend (PENDING).<br>'
-        '3. Next Monday, trade activates at the actual open price of week N+1.<br>'
-        '4. Stop and targets are recalculated from the actual entry price.<br>'
-        '5. System checks weekly -- closes automatically when stop or target is hit.<br><br>'
+        '1. Signal detected on weekly close.<br>'
+        '2. You review and press Enter Trade (PENDING).<br>'
+        '3. Next trading day, trade activates at actual open price.<br>'
+        '4. Stop and targets recalculated from actual entry.<br>'
+        '5. System checks daily -- closes automatically on stop or target.<br><br>'
         '<b style="color:#00f5a0;">Bullish Divergence (Long)</b><br>'
         'Price makes a lower low, RSI makes a higher low. RSI must be below 40.<br><br>'
         '<b style="color:#00f5a0;">Bearish Divergence (Short)</b><br>'
@@ -520,7 +545,7 @@ with tab_logic:
         '<span style="color:#6b7280;">Target 2</span> &nbsp;&nbsp; actual_entry plus 4.0 x ATR(14)<br>'
         '<span style="color:#6b7280;">Timeout</span> &nbsp;&nbsp; 48 weekly candles (~1 year)<br>'
         '<span style="color:#6b7280;">Short Filter</span> &nbsp;&nbsp; price must be below MA200 weekly<br>'
-        '<span style="color:#6b7280;">Timeframe</span> &nbsp;&nbsp; Weekly (1wk)'
+        '<span style="color:#6b7280;">Timeframe</span> &nbsp;&nbsp; Weekly (1wk) scan | Daily execution'
         '</div>',
         unsafe_allow_html=True
     )
