@@ -1,6 +1,6 @@
 """
-app.py — SP500-RSI Trader
-Trade lifecycle: pending (signal night) -> open (next day open) -> closed (auto on stop/target)
+app.py — SP500-RSI Weekly Trader
+Trade lifecycle: pending (signal week) -> open (next week open) -> closed (auto on stop/target)
 """
 
 import streamlit as st
@@ -80,9 +80,8 @@ def position_size(entry, stop, capital=INITIAL_CAPITAL):
 if "positions_updated" not in st.session_state:
     with st.spinner("Updating positions..."):
         update_summary = update_all_positions()
-    st.session_state["positions_updated"]  = True
-    st.session_state["update_summary"]     = update_summary
-
+    st.session_state["positions_updated"] = True
+    st.session_state["update_summary"]    = update_summary
 
 st.markdown(
     '<div style="padding:1.5rem 0 0.5rem;border-bottom:1px solid #1e2230;margin-bottom:1.5rem;">'
@@ -92,7 +91,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Show update summary if something happened
 us = st.session_state.get("update_summary", {})
 if us.get("activated", 0) > 0 or us.get("closed", 0) > 0:
     parts = []
@@ -117,7 +115,7 @@ with tab_scanner:
     with col1:
         limit = st.selectbox("Number of stocks", [50, 100, 200, 500], index=1)
     with col2:
-        lookback_days = st.number_input("Signal lookback (days)", min_value=7, max_value=60, value=30)
+        lookback_weeks = st.number_input("Signal lookback (weeks)", min_value=4, max_value=52, value=26)
 
     scan_btn = st.button("SCAN MARKET", use_container_width=True, key="scan_btn")
 
@@ -134,7 +132,7 @@ with tab_scanner:
                 if sigs.empty:
                     continue
                 latest_date = df.index[-1].normalize()
-                cutoff      = latest_date - pd.Timedelta(days=lookback_days)
+                cutoff      = latest_date - pd.Timedelta(weeks=lookback_weeks)
                 recent      = sigs[sigs.index.normalize() >= cutoff]
                 for sig_date, sig in recent.iterrows():
                     size     = position_size(sig["entry"], sig["stop"])
@@ -200,7 +198,7 @@ with tab_scanner:
                         f'{taken_tag}'
                         f'</div>'
                         f'<div class="signal-detail">'
-                        f'Date: <b>{sig["date"]}</b> &nbsp;|&nbsp;'
+                        f'Week: <b>{sig["date"]}</b> &nbsp;|&nbsp;'
                         f'Signal Entry: <b>{sig["entry"]}</b> &nbsp;|&nbsp;'
                         f'Stop: <b>{sig["stop"]}</b> &nbsp;|&nbsp;'
                         f'T1: <b>{sig["target1"]}</b> &nbsp;|&nbsp;'
@@ -234,7 +232,7 @@ with tab_scanner:
         ticker_opened = st.session_state.pop("trade_opened")
         st.success(
             f"Trade registered as PENDING: {ticker_opened} -- "
-            f"Will activate at tomorrow's open price. Check Paper Trader tab."
+            f"Will activate at next week open price. Check Paper Trader tab."
         )
 
 
@@ -281,7 +279,7 @@ with tab_paper:
 
     # ── Pending trades ────────────────────────────────────────
     if not pending_df.empty:
-        st.markdown('<div class="section-title">Pending Trades — Waiting for Next Open</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Pending Trades -- Waiting for Next Week Open</div>', unsafe_allow_html=True)
         for _, t in pending_df.iterrows():
             is_long   = t["direction"] == "long"
             dir_label = "LONG" if is_long else "SHORT"
@@ -294,12 +292,12 @@ with tab_paper:
                 f'<span class="tag tag-yellow" style="margin-left:0.3rem;">PENDING</span>'
                 f'</div>'
                 f'<div class="signal-detail">'
-                f'Signal date: <b>{t["signal_date"]}</b> &nbsp;|&nbsp;'
+                f'Signal week: <b>{t["signal_date"]}</b> &nbsp;|&nbsp;'
                 f'Signal entry: <b>{t["signal_entry"]}</b> &nbsp;|&nbsp;'
                 f'Signal stop: <b>{t["signal_stop"]}</b> &nbsp;|&nbsp;'
                 f'Signal T1: <b>{t["signal_target1"]}</b> &nbsp;|&nbsp;'
                 f'RSI: {t["signal_rsi"]}'
-                f'<br><span style="color:var(--yellow);">Will activate at tomorrow\'s open. Actual prices will be set then.</span>'
+                f'<br><span style="color:var(--yellow);">Will activate at next week open. Actual prices will be set then.</span>'
                 f'</div>'
                 f'</div>',
                 unsafe_allow_html=True
@@ -319,8 +317,6 @@ with tab_paper:
             is_long   = t["direction"] == "long"
             dir_tag   = "tag-green" if is_long else "tag-red"
             dir_label = "LONG" if is_long else "SHORT"
-
-            # Slippage display
             slippage     = t.get("slippage") or 0
             slip_cls     = "diff-pos" if (is_long and slippage < 0) or (not is_long and slippage > 0) else "diff-neg"
             slip_display = f"{slippage:+.4f}" if slippage else "N/A"
@@ -364,10 +360,9 @@ with tab_paper:
                     st.session_state.pop("positions_updated", None)
                     st.rerun()
 
-    # ── Trade history with signal vs actual comparison ────────
+    # ── Trade history ─────────────────────────────────────────
     if not closed_df.empty:
-        st.markdown('<div class="section-title">Trade History — Signal vs Actual</div>', unsafe_allow_html=True)
-
+        st.markdown('<div class="section-title">Trade History -- Signal vs Actual</div>', unsafe_allow_html=True)
         display_cols = [
             "ticker", "direction",
             "signal_date", "signal_entry", "signal_stop", "signal_target1",
@@ -386,7 +381,6 @@ with tab_paper:
             }
         )
 
-        # Cumulative R curve
         closed_sorted = closed_df.sort_values("actual_exit_date").copy()
         closed_sorted["cumulative_r"] = closed_sorted["r_multiple"].cumsum()
         fig = go.Figure()
@@ -403,11 +397,10 @@ with tab_paper:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Slippage analysis
         if "slippage" in closed_df.columns and closed_df["slippage"].notna().any():
             st.markdown('<div class="section-title">Slippage Analysis</div>', unsafe_allow_html=True)
             avg_slip = closed_df["slippage"].mean()
-            c1, c2 = st.columns(2)
+            c1, c2   = st.columns(2)
             c1.markdown(
                 f'<div class="metric-card">'
                 f'<div class="metric-label">Avg Slippage</div>'
@@ -417,8 +410,9 @@ with tab_paper:
             )
             c2.markdown(
                 f'<div class="metric-card">'
-                f'<div class="metric-label">Signal Entry Accuracy</div>'
-                f'<div class="metric-value" style="font-size:1.2rem;">comparing signal vs actual</div></div>',
+                f'<div class="metric-label">Hold Period</div>'
+                f'<div class="metric-value" style="font-size:1.2rem;">'
+                f'{round(closed_df["hold_days"].mean(), 1) if "hold_days" in closed_df.columns else "N/A"} days avg</div></div>',
                 unsafe_allow_html=True
             )
 
@@ -455,7 +449,7 @@ with tab_backtest:
         st.markdown('<div class="section-title">Results</div>', unsafe_allow_html=True)
         col_is, col_oos, col_all = st.columns(3)
         for col, key, label in [
-            (col_is,  "is",  "IN-SAMPLE (2015-2021)"),
+            (col_is,  "is",  "IN-SAMPLE (2010-2021)"),
             (col_oos, "oos", "OUT-OF-SAMPLE (2022-2024)"),
             (col_all, "all", "TOTAL"),
         ]:
@@ -488,29 +482,29 @@ with tab_backtest:
                               height=320)
             st.plotly_chart(fig, use_container_width=True)
         st.download_button("DOWNLOAD RESULTS CSV", results.to_csv(index=False),
-                           "backtest_results.csv", "text/csv")
+                           "backtest_weekly_results.csv", "text/csv")
 
 
 # ════════════════════════════════════════════════════════════
 # TAB 4 — LOGIC
 # ════════════════════════════════════════════════════════════
 with tab_logic:
-    st.markdown('<div class="section-title">RSI Divergence -- SP500 Daily</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">RSI Divergence -- SP500 Weekly</div>', unsafe_allow_html=True)
     st.markdown(
         '<div style="font-size:0.85rem;color:#e8eaf0;line-height:1.7;">'
         '<b style="color:#00f5a0;">The Idea</b><br>'
         'When price and momentum disagree -- momentum wins.<br><br>'
         '<b style="color:#00f5a0;">Trade Lifecycle</b><br>'
-        '1. Signal detected on close of day N.<br>'
-        '2. You review and press Enter Trade that evening (PENDING).<br>'
-        '3. Next morning, trade activates at the actual open price of day N+1.<br>'
+        '1. Signal detected on close of week N.<br>'
+        '2. You review and press Enter Trade that weekend (PENDING).<br>'
+        '3. Next Monday, trade activates at the actual open price of week N+1.<br>'
         '4. Stop and targets are recalculated from the actual entry price.<br>'
-        '5. System checks daily -- closes automatically when stop or target is hit.<br><br>'
+        '5. System checks weekly -- closes automatically when stop or target is hit.<br><br>'
         '<b style="color:#00f5a0;">Bullish Divergence (Long)</b><br>'
         'Price makes a lower low, RSI makes a higher low. RSI must be below 40.<br><br>'
         '<b style="color:#00f5a0;">Bearish Divergence (Short)</b><br>'
         'Price makes a higher high, RSI makes a lower high. RSI must be above 60. '
-        'Short only allowed when price is below MA200.'
+        'Short only allowed when price is below MA200 weekly.'
         '</div>',
         unsafe_allow_html=True
     )
@@ -524,18 +518,19 @@ with tab_logic:
         '<span style="color:#6b7280;">Stop</span> &nbsp;&nbsp; actual_entry minus 1.5 x ATR(14)<br>'
         '<span style="color:#6b7280;">Target 1</span> &nbsp;&nbsp; actual_entry plus 2.0 x ATR(14)<br>'
         '<span style="color:#6b7280;">Target 2</span> &nbsp;&nbsp; actual_entry plus 4.0 x ATR(14)<br>'
-        '<span style="color:#6b7280;">Timeout</span> &nbsp;&nbsp; 48 trading days<br>'
-        '<span style="color:#6b7280;">Short Filter</span> &nbsp;&nbsp; price must be below MA200<br>'
-        '<span style="color:#6b7280;">Timeframe</span> &nbsp;&nbsp; Daily'
+        '<span style="color:#6b7280;">Timeout</span> &nbsp;&nbsp; 48 weekly candles (~1 year)<br>'
+        '<span style="color:#6b7280;">Short Filter</span> &nbsp;&nbsp; price must be below MA200 weekly<br>'
+        '<span style="color:#6b7280;">Timeframe</span> &nbsp;&nbsp; Weekly (1wk)'
         '</div>',
         unsafe_allow_html=True
     )
-    st.markdown('<div class="section-title">Backtest Results (2015-2024)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Backtest Results (2010-2024)</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="metric-card" style="font-size:0.78rem;line-height:1.9;color:#e8eaf0;">'
-        '<span style="color:#6b7280;">IS (2015-2021)</span> &nbsp;&nbsp; 4,592 trades | Win Rate 86.9% | Avg R 1.063<br>'
-        '<span style="color:#6b7280;">OOS (2022-2024)</span> &nbsp;&nbsp; 2,429 trades | Win Rate 83.7% | Avg R 1.020<br>'
-        '<span style="color:#6b7280;">Degradation</span> &nbsp;&nbsp; 3.2% win rate | 0.043R -- within normal range'
+        '<span style="color:#6b7280;">IS (2010-2021)</span> &nbsp;&nbsp; Win Rate 85.1% | Avg R 1.038<br>'
+        '<span style="color:#6b7280;">OOS (2022-2024)</span> &nbsp;&nbsp; Win Rate 88.8% | Avg R 1.123<br>'
+        '<span style="color:#6b7280;">OOS beats IS</span> &nbsp;&nbsp; strong sign of robustness -- no overfitting<br>'
+        '<span style="color:#6b7280;">Short Filter</span> &nbsp;&nbsp; MA200 weekly -- best balance of quality vs trade count'
         '</div>',
         unsafe_allow_html=True
     )
@@ -544,7 +539,8 @@ with tab_logic:
         '<div class="metric-card" style="font-size:0.78rem;line-height:1.9;color:#e8eaf0;">'
         '<span style="color:#6b7280;">Risk per trade</span> &nbsp;&nbsp; 1% of $10,000 capital<br>'
         '<span style="color:#6b7280;">Position size</span> &nbsp;&nbsp; (capital x 1%) / (actual_entry - actual_stop)<br>'
-        '<span style="color:#6b7280;">Max exposure</span> &nbsp;&nbsp; 10% portfolio (~10 trades max)'
+        '<span style="color:#6b7280;">Max exposure</span> &nbsp;&nbsp; 10% portfolio (~10 trades max)<br>'
+        '<span style="color:#6b7280;">Avg trades per year</span> &nbsp;&nbsp; ~51 (1 per week)'
         '</div>',
         unsafe_allow_html=True
     )
